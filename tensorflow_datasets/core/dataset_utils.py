@@ -78,7 +78,8 @@ def build_dataset(instruction_dicts,
   dataset = dataset.interleave(
       instruction_ds_to_file_ds,
       cycle_length=parallel_reads,
-      num_parallel_calls=tf.data.experimental.AUTOTUNE)
+      # num_parallel_calls=tf.data.experimental.AUTOTUNE
+      )
   return dataset
 
 

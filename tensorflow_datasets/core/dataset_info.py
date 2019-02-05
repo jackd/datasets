@@ -379,8 +379,8 @@ _FEATURE_TYPE_MAP = {
     tf.int64: schema_pb2.INT,
     tf.uint8: schema_pb2.INT,
     tf.uint16: schema_pb2.INT,
-    tf.uint32: schema_pb2.INT,
-    tf.uint64: schema_pb2.INT,
+    # tf.uint32: schema_pb2.INT,
+    # tf.uint64: schema_pb2.INT,
 }
 
 _SCHEMA_TYPE_MAP = {

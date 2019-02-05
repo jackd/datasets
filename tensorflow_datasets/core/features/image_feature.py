@@ -146,7 +146,9 @@ class Image(feature.FeatureConnector):
   def decode_example(self, example):
     """Reconstruct the image from the tf example."""
     img = tf.image.decode_image(
-        example, channels=self._shape[-1], dtype=tf.uint8)
+        example, channels=self._shape[-1],
+        # dtype=tf.uint8
+        )
     img.set_shape(self._shape)
     return img
 

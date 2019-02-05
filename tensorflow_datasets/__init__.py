@@ -73,15 +73,45 @@ def _ensure_tf_install():  # pylint: disable=g-statement-before-imports
   #
   required_tensorflow_version = "1.13.0"
 
-  if (distutils.version.LooseVersion(tf.__version__) <
-      distutils.version.LooseVersion(required_tensorflow_version)):
-    raise ImportError(
-        "This version of TensorFlow Datasets requires TensorFlow "
-        "version >= {required}; Detected an installation of version {present}. "
-        "Please upgrade TensorFlow to proceed.".format(
-            required=required_tensorflow_version,
-            present=tf.__version__))
+  # if (distutils.version.LooseVersion(tf.__version__) <
+  #     distutils.version.LooseVersion(required_tensorflow_version)):
+  #   raise ImportError(
+  #       "This version of TensorFlow Datasets requires TensorFlow "
+  #       "version >= {required}; Detected an installation of version {present}. "
+  #       "Please upgrade TensorFlow to proceed.".format(
+  #           required=required_tensorflow_version,
+  #           present=tf.__version__))
   # pylint: enable=g-import-not-at-top
+
+
+  class _Object():
+    pass
+    # def __init__(self):
+    #   pass
+      # self.FixedLenFeature = tf.FixedLenFeature
+      # self.parse_single_example = tf.parse_single_example
+
+
+
+  if not hasattr(tf, 'io'):
+    # tf.gfile = tf.io.gfile
+    io = _Object()
+    tf.io = io
+
+
+  for k in 'gfile', 'FixedLenFeature', 'parse_single_example':
+    if not hasattr(tf.io, k):
+      setattr(tf.io, k, getattr(tf, k))
+
+  for k, K in (('exists', 'Exists'), ('listdir', 'ListDirectory')):
+    if not hasattr(tf.io.gfile, k):
+      setattr(tf.io.gfile, k, getattr(tf.io.gfile, K))
+
+  if not hasattr(tf.data, 'experimental'):
+    tf.data.experimental = _Object()
+
+  if not hasattr(tf.data.experimental, 'AUTOTUNE'):
+    tf.data.experimental.AUTOTUNE = 1
 
   # Compat for TF > 1.13
   if not hasattr(tf.io.gfile, "GFile"):
@@ -108,4 +138,3 @@ from tensorflow_datasets.public_api import *  # pylint: disable=wildcard-import
 # __all__ for import * as well as documentation
 from tensorflow_datasets import public_api  # pylint: disable=g-bad-import-order
 __all__ = public_api.__all__
-

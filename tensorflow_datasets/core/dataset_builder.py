@@ -341,9 +341,9 @@ class DatasetBuilder(object):
     dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
 
     # If shuffling, allow pipeline to be non-deterministic
-    options = tf.data.Options()
-    options.experimental_deterministic = not shuffle_files
-    dataset = dataset.with_options(options)
+    # options = tf.data.Options()
+    # options.experimental_deterministic = not shuffle_files
+    # dataset = dataset.with_options(options)
 
     if wants_full_dataset:
       return tf.data.experimental.get_single_element(dataset)
