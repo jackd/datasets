@@ -108,7 +108,9 @@ def _ensure_tf_install():  # pylint: disable=g-statement-before-imports
       ('listdir', 'ListDirectory'),
       ('makedirs', 'MakeDirs'),
       ('rmtree', 'DeleteRecursively'),
-      ('copy', 'Copy')):
+      ('copy', 'Copy'),
+      ('rename', 'Rename'),
+      ('remove', 'Remove')):
     if not hasattr(tf.io.gfile, k):
       setattr(tf.io.gfile, k, getattr(tf.io.gfile, K))
 
