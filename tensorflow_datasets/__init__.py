@@ -103,7 +103,10 @@ def _ensure_tf_install():  # pylint: disable=g-statement-before-imports
     if not hasattr(tf.io, k):
       setattr(tf.io, k, getattr(tf, k))
 
-  for k, K in (('exists', 'Exists'), ('listdir', 'ListDirectory')):
+  for k, K in (
+      ('exists', 'Exists'),
+      ('listdir', 'ListDirectory'),
+      ('makedirs', 'MakeDirs')):
     if not hasattr(tf.io.gfile, k):
       setattr(tf.io.gfile, k, getattr(tf.io.gfile, K))
 
