@@ -83,41 +83,41 @@ def project_points(
   """
 
   assert(len(points.shape) == 2)
-  assert(points.shape[1] == 3)
+  assert(points.shape[-1] == 3)
   points = points.copy()
 
   # pylint: disable=unbalanced-tuple-unpacking
-  XX, depth = np.split(points, (2,), axis=-1)
-  XX /= depth
+  xy, depth = np.split(points, (2,), axis=-1)
+  xy /= depth
   depth = np.squeeze(depth, axis=-1)
-  r2 = np.sum(np.square(XX), axis=-1)
+  r2 = np.sum(np.square(xy), axis=-1)
 
   r22 = r2*r2
   r23 = r22*r2
-  r_pows = np.stack((r2, r22, r23), axis=-1)
-  radial_dist = 1 + np.sum(radial_dist_coeff[..., -1::-1] * r_pows, axis=-1)
-  tangential_dist = np.sum(tangential_dist_coeff*XX, axis=1)
+  r_pows = np.stack((r23, r22, r2), axis=-1)
+  radial_dist = 1 + np.sum(radial_dist_coeff * r_pows, axis=-1)
+  tangential_dist = np.sum(tangential_dist_coeff*xy, axis=1)
 
-  XXX = XX * (
+  distorted_xy = xy * (
     np.expand_dims(radial_dist + tangential_dist, axis=-1) +
     np.expand_dims(r2, axis=-1) * np.expand_dims(
       tangential_dist_coeff, axis=-2))
 
-  proj = (focal_length * XXX) + center
+  proj = (focal_length * distorted_xy) + center
 
   return proj, depth, radial_dist, tangential_dist, r2
 
 
 def _validate_transform_shapes(points, rotation, translation):
   shape = points.shape
-  if len(shape) != 2 or shape[1] != 3:
-    raise ValueError("points must have shape (N, 3), got %s" % shape)
+  if shape[-1] != 3:
+    raise ValueError("points must have shape (N, 3), got %s" % str(shape))
   shape = rotation.shape
   if shape != (3, 3):
-    raise ValueError("rotation must have shape (3, 3), got %s" % shape)
+    raise ValueError("rotation must have shape (3, 3), got %s" % str(shape))
   shape = translation.shape
   if shape != (3,):
-    raise ValueError("translation must have shape (3,), got %s" % shape)
+    raise ValueError("translation must have shape (3,), got %s" % str(shape))
 
 
 def world_to_camera_frame(points_world, rotation, translation):

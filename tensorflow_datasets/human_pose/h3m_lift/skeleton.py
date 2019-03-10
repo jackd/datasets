@@ -2,6 +2,9 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from tensorflow_datasets.core import utils
+import numpy as np
+
+import collections
 
 
 class Skeleton(object):
@@ -99,6 +102,142 @@ class Skeleton(object):
     return tuple(self.index(j) for j in joint_subset)
 
 
-s14 = Skeleton((('TODO', None),))
-s16 = Skeleton((('TODO', None),))
-s17 = Skeleton((('TODO', None),))
+def conversion_indices(src_skeleton, target_skeleton):
+  return [src_skeleton.index(j) for j in target_skeleton.joints]
+
+
+
+thorax = 'thorax'
+r_hip = 'r_hip'
+r_knee = 'r_knee'
+r_ankle = 'r_ankle'
+r_ball = 'r_ball'
+r_toes = 'r_toes'
+l_hip = 'l_hip'
+l_knee = 'l_knee'
+l_ankle = 'l_ankle'
+l_ball = 'l_ball'
+l_toes = 'l_toes'
+neck = 'neck'
+head_center = 'head-center'
+head_back = 'head-back'
+l_shoulder = 'l_shoulder'
+l_elbow = 'l_elbow'
+l_wrist = 'l_wrist'
+l_thumb = 'l_thumb'
+l_little = 'l_little'
+r_shoulder = 'r_shoulder'
+r_elbow = 'r_elbow'
+r_wrist = 'r_wrist'
+r_thumb = 'r_thumb'
+r_little = 'r_little'
+pelvis = 'pelvis'
+
+
+def _s32_links():
+  """Original 32 joint skeleton links.
+
+  This contains a lot of redundant information. We don't bother with parent
+  information here as this is purely used to conversion
+  """
+  joints = ['joint%d' % i for i in range(32)]
+  for (i, v) in (
+        (0, pelvis),
+        (1, r_hip),
+        (2, r_knee),
+        (3, r_ankle),
+        (6, l_hip),
+        (7, l_knee),
+        (8, l_ankle),
+        (12, thorax), # (12, Spine),
+        # (13, Thorax),
+        (13, neck),
+        (14, head_center),
+        (15, head_back),
+        (17, l_shoulder),
+        (18, l_elbow),
+        (19, l_wrist),
+        (25, r_shoulder),
+        (26, r_elbow),
+        (27, r_wrist),
+      ):
+    joints[i] = v
+  return tuple((j, None) for j in joints)
+
+
+s32 = Skeleton(_s32_links())
+s17 = Skeleton((
+    (pelvis, None),
+    (r_hip, pelvis),
+    (r_knee, r_hip),
+    (r_ankle, r_knee),
+    (l_hip, pelvis),
+    (l_knee, l_hip),
+    (l_ankle, l_knee),
+    (thorax, pelvis),
+    (neck, thorax),
+    (head_center, neck),
+    (head_back, head_center),
+    (l_shoulder, neck),
+    (l_elbow, l_shoulder),
+    (l_wrist, l_elbow),
+    (r_shoulder, neck),
+    (r_elbow, r_shoulder),
+    (r_wrist, r_elbow),
+))
+
+s16 = Skeleton((
+    (r_hip, thorax),
+    (r_knee, r_hip),
+    (r_ankle, r_knee),
+    (l_hip, thorax),
+    (l_knee, l_hip),
+    (l_ankle, l_knee),
+    (thorax, None),
+    (neck, thorax),
+    (head_center, neck),
+    (head_back, head_center),
+    (l_shoulder, neck),
+    (l_elbow, l_shoulder),
+    (l_wrist, l_elbow),
+    (r_shoulder, neck),
+    (r_elbow, r_shoulder),
+    (r_wrist, r_elbow),
+))
+
+s14 = Skeleton((
+    (head_back, None),
+    (neck, head_back),
+    (r_shoulder, neck),
+    (r_elbow, r_shoulder),
+    (r_wrist, r_elbow),
+    (l_shoulder, neck),
+    (l_elbow, l_shoulder),
+    (l_wrist, l_elbow),
+    (r_hip, neck),
+    (r_knee, r_hip),
+    (r_ankle, r_knee),
+    (l_hip, neck),
+    (l_knee, l_hip),
+    (l_ankle, l_knee),
+))
+
+# used by hourglass networks
+mpii_s16 = Skeleton((
+    (r_ankle, r_knee),
+    (r_knee, r_hip),
+    (r_hip, pelvis),
+    (l_hip, pelvis),
+    (l_knee, l_hip),
+    (l_ankle, l_knee),
+    (pelvis, None),
+    (thorax, pelvis),
+    (neck, thorax),
+    (head_back, None),
+    (r_wrist, r_elbow),
+    (r_elbow, r_shoulder),
+    (r_shoulder, neck),
+    (l_shoulder, neck),
+    (l_elbow, l_shoulder),
+    (l_wrist, l_elbow),
+))
