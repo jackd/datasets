@@ -22,17 +22,24 @@ from __future__ import print_function
 import importlib
 
 from tensorflow_datasets.core.utils import py_utils as utils
+from distutils import version
 
 
-def _try_import(module_name):
+def _try_import(module_name, min_version=None):
   """Try importing a module, with an informative error message on failure."""
   try:
     mod = importlib.import_module(module_name)
+    if (min_version is not None and
+        version.LooseVersion(mod.__version__) < min_version):
+      raise ImportError(
+        "Installed version of %s does not satisfy minimum version (%s). "
+        "See setup.py extras_require. The dataset you are trying to use may "
+        "have additional dependencies." % (module_name, min_version))
     return mod
   except ImportError:
     err_msg = ("Tried importing %s but failed. See setup.py extras_require. "
                "The dataset you are trying to use may have additional "
-               "dependencies.")
+               "dependencies." % module_name)
     utils.reraise(err_msg)
 
 
@@ -52,7 +59,8 @@ class LazyImporter(object):
   @utils.classproperty
   @classmethod
   def h5py(cls):
-    return _try_import("h5py")
+    # issues with h5py.File(fp, "r") for earlier versions
+    return _try_import("h5py", min_version="2.9.0")
 
   @utils.classproperty
   @classmethod

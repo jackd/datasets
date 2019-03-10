@@ -14,7 +14,9 @@
 # limitations under the License.
 
 """2D-3D human pose dimensionality lifting on Human 3.6 Million."""
-# TODO(jackd): tests, add configs, check hourglass/finetuned_hourglass works
+# TODO(jackd):
+# tests
+# visualize
 
 from __future__ import absolute_import
 from __future__ import division
@@ -24,7 +26,6 @@ import os
 import collections
 import itertools
 import distutils.version
-import zipfile
 
 from absl import logging
 
@@ -37,20 +38,11 @@ from tensorflow_datasets.core import utils
 from tensorflow_datasets.core.download import extractor
 from tensorflow_datasets.core.utils import py_utils
 
+from tensorflow_datasets.human_pose import skeleton as base_skeleton
+from tensorflow_datasets.human_pose.mpii import skeleton as mpii_skeleton
 from tensorflow_datasets.human_pose.h3m_lift import skeleton
 from tensorflow_datasets.human_pose.h3m_lift import transform
-
-
-def _as_h5py(fp):
-  h5py = tfds.core.lazy_imports.h5py
-  try:
-    return h5py.File(fp, "r")
-  except OSError:
-    if distutils.version.LooseVersion(h5py.__version__) < "2.9.0":
-      py_utils.reraise(
-        "Error reading GFile with h5py. Please upgrade to at least 2.9.0")
-    else:
-      raise
+from tensorflow_datasets.core import lazy_imports
 
 
 CAMERA_IDS = (
@@ -60,28 +52,10 @@ CAMERA_IDS = (
     "60457274",
 )
 
+
 TRAIN_SUBJECT_IDS = ('S1', 'S5', 'S6', 'S7', 'S8')
 VALIDATION_SUBJECT_IDS = ('S9', 'S11')
 SUBJECT_IDS = TRAIN_SUBJECT_IDS + VALIDATION_SUBJECT_IDS
-
-
-class Source2D(object):
-  GROUND_TRUTH = "ground_truth"
-  HOURGLASS = "hourglass"
-  HOURGLASS_FINETUNED = "hourglass_finetuned"
-
-  @classmethod
-  def all(cls):
-    return (
-      Source2D.GROUND_TRUTH,
-      Source2D.HOURGLASS,
-      Source2D.HOURGLASS_FINETUNED,
-    )
-
-  @classmethod
-  def validate(cls, key):
-    return key in cls.all()
-
 
 ExtrinsicCameraParams = collections.namedtuple(
     'ExtrinsicCameraParams', ['rotation', 'translation'])
@@ -158,7 +132,7 @@ def load_camera_params(path, subject_ids=SUBJECT_IDS, camera_ids=CAMERA_IDS):
 
   # with h5py.File(path,'r') as hf:
   with tf.io.gfile.GFile(path, "rb") as fp:
-    hf = _as_h5py(fp)
+    hf = lazy_imports.h5py.File(fp, "r")  # pylint: disable=no-member
     for i, subject_id in enumerate(subject_ids):
       si = int(subject_id[1:])
       for j, camera_id in enumerate(camera_ids):
@@ -178,11 +152,9 @@ class H3mLiftConfig(tfds.core.BuilderConfig):
   def __init__(
       self,
       version=tfds.core.Version(0, 0, 1),
-      source_2d=Source2D.GROUND_TRUTH,
       skeleton_2d=skeleton.s14,
       skeleton_3d=skeleton.s14,
       **kwargs):
-    self.source_2d = source_2d
     self.skeleton_2d = skeleton_2d
     self.skeleton_3d = skeleton_3d
     super(H3mLiftConfig, self).__init__(version=version, **kwargs)
@@ -247,26 +219,35 @@ def _load_p3(base_dir, subject_id, sequence_id):
     _p3_subject_dir(base_dir, subject_id), _filename_3d(sequence_id))
   with tf.io.gfile.GFile(path, "rb") as fobj:
     return np.reshape(
-      _as_h5py(fobj)["3D_positions"][:], (-1, 32, 3))
+      lazy_imports.h5py.File(fobj, "r")["3D_positions"][:], (-1, 32, 3))   # pylint: disable=no-member
+
+
+def _is_missing(subject_id, sequence_id, camera_id):
+  return \
+    (subject_id, sequence_id, camera_id) == ('S11', 'Directions', '54138969')
 
 
 def _load_p2_hourglass(
     base_dir, subject_id, sequence_id, camera_id):
+  if _is_missing(subject_id, sequence_id, camera_id):
+    return None
   path = os.path.join(
     base_dir, "h36m", subject_id,
     "StackedHourglass",
     _filename_2d(sequence_id, camera_id))
   with tf.io.gfile.GFile(path, "rb") as fobj:
-    return _as_h5py(fobj)["3D_positions"][:]
+    return lazy_imports.h5py.File(fobj, "r")["poses"][:]  # pylint: disable=no-member
 
 
 def _load_p2_finetuned(
     finetuned_dir, subject_id, sequence_id, camera_id):
+  if _is_missing(subject_id, sequence_id, camera_id):
+    return None
   path = os.path.join(
     finetuned_dir, subject_id, "StackedHourglassFineTuned240",
     _filename_2d(sequence_id, camera_id))
   with tf.io.gfile.GFile(path, "rb") as fobj:
-    return _as_h5py(fobj)["3D_positions"][:]
+    return lazy_imports.h5py.File(fobj, "r")["poses"][:]  # pylint: disable=no-member
 
 
 def _ground_truth_loader(base_dir, extrinsic_params, intrinsic_params):
@@ -305,33 +286,50 @@ def _finetuned_loader(base_dir, finetuned_dir):
   return f
 
 
-class H3mLift(tfds.core.GeneratorBasedBuilder):
-  """
-  2D - 3D pose lifting task for human pose estimation on human 3.6m.
-
-  3D data is provided in world coordinates by default. We provide extrinsic
-  camera parameters for transforming to world coordinates and intrinsic
-  camera coordinates for projecting other 3D points in
-  `H3mLift.load_camera_params`.
-
-  Note GROUND_TRUTH 2D poses are available via the "base_sXX" configs, so there
-  is no need to transform/project the ground truth 3D poses.
-  """
-
-  BUILDER_CONFIGS = [
-    H3mLiftConfig(
-      name="base_s14",
-      source_2d=Source2D.GROUND_TRUTH,
-      skeleton_2d=skeleton.s14,
-      skeleton_3d=skeleton.s14,
-      description="14 joint ground truth points"),
-    H3mLiftConfig(
-      name="base_s16",
-      source_2d=Source2D.GROUND_TRUTH,
+GROUND_TRUTH = H3mLiftConfig(
+      name="ground_truth",
       skeleton_2d=skeleton.s16,
       skeleton_3d=skeleton.s16,
-      description="16 joint ground truth points"),
-  ]
+      description="pose_2d is from the projected ground truth pose_3d")
+
+HOURGLASS = H3mLiftConfig(
+      name="hourglass",
+      skeleton_2d=mpii_skeleton.s16,
+      skeleton_3d=skeleton.s16,
+      description=
+      "pose_2d is from a stacked hourglass network trained on mpii")
+
+HOURGLASS_FINETUNED = H3mLiftConfig(
+      name="hourglass_finetuned",
+      skeleton_2d=mpii_skeleton.s16,
+      skeleton_3d=skeleton.s16,
+      description=
+        "pose_2d is from a stacked hourglass network fine-tuned on h3m")
+
+
+class H3mLift(tfds.core.GeneratorBasedBuilder):
+  """2D - 3D pose lifting task for human pose estimation on human 3.6m.
+
+  `H3mLift.load_camera_params` provides camera parameters. Basic transformations
+  and projection operations are available in
+  `tfds.human_pose.h3m_lift.transform`.
+
+  For information about the joints used, see
+  `tfds.human_pose.h3m_lift.skeleton`
+
+  3D data is provided in world coordinates by default on a 16 joint skeleton.
+
+  2D data is available from 3 configs:
+    * `ground_truth`: the 3D poses projected to 2D using camera parameters,
+      using the same skeleton as 3D poses (skeleton.s16)
+    * `hourglass`: a stacked hourglass network trained on MPII images. Note the
+      skeleton here is `skeleton.mpii_s16`, which has the same number of joints,
+      but different joints (only 1 joint in the head and an independent pelvis).
+    * `hourglass_finetuned`: similar to `hourglass` except the network is
+      finetuned on h3m dataset (same source as the 3D poses).
+  """
+
+  BUILDER_CONFIGS = [GROUND_TRUTH, HOURGLASS, HOURGLASS_FINETUNED]
 
   @property
   def _camera_path(self):
@@ -383,22 +381,24 @@ class H3mLift(tfds.core.GeneratorBasedBuilder):
       tf.io.gfile.copy(
         os.path.join(base_dir, "h36m", "cameras.h5"), camera_path)
 
-    p3_indices = skeleton.conversion_indices(skeleton.s32, config.skeleton_3d)
+    p3_indices = base_skeleton.conversion_indices(
+      skeleton.s32, config.skeleton_3d)
 
-    if config.source_2d == Source2D.GROUND_TRUTH:
+    if config is GROUND_TRUTH:
       loader = _ground_truth_loader(base_dir, *self.load_camera_params())
-      p2_indices = skeleton.conversion_indices(skeleton.s32, config.skeleton_2d)
+      p2_indices = base_skeleton.conversion_indices(
+        skeleton.s32, config.skeleton_2d)
     else:
-      assert(config.skeleton_2d is skeleton.mpii_s16)
+      assert(config.skeleton_2d is mpii_skeleton.s16)
       p2_indices = None
 
-      if config.source_2d == Source2D.HOURGLASS:
+      if config is HOURGLASS:
         loader = _hourglass_loader(base_dir)
-      elif config.source_2d == Source2D.HOURGLASS_FINETUNED:
+      elif config is HOURGLASS_FINETUNED:
         loader = _finetuned_loader(
           base_dir, dl_manager.extract(_get_finetuned_data(manual_dir)))
       else:
-        raise ValueError("Invalid source_2d '%s'" % config.source_2d)
+        raise ValueError("Invalid config '%s'" % config)
 
     shared_kwargs = dict(
       base_dir=base_dir,
@@ -435,6 +435,8 @@ class H3mLift(tfds.core.GeneratorBasedBuilder):
         assert(ext == "h5")
         for camera_id in CAMERA_IDS:
           p3, p2 = loader(subject_id, sequence_id, camera_id)
+          if p2 is None:
+            continue
           if p3_indices is not None:
             p3 = p3[:, p3_indices, :]
           if p2_indices is not None:
