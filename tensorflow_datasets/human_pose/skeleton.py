@@ -65,7 +65,7 @@ class Skeleton(object):
       return self._num_joints
 
   @utils.memoized_property
-  def _flip_left_right_indices(self):
+  def flip_left_right_indices(self):
     indices = []
     for i, (child, _) in enumerate(self._links):
       if child.startsiwth("l_"):
@@ -75,7 +75,7 @@ class Skeleton(object):
     return tuple(indices)
 
   def flip_left_right(self, points, axis=0):
-    return np.take(points, self._flip_left_right_indices, axis=axis)
+    return np.take(points, self.flip_left_right_indices, axis=axis)
 
   def index(self, key):
     return self._indices[key]
@@ -95,7 +95,8 @@ class Skeleton(object):
 
   def parent_index(self, child_index):
     """Get parent index of the given child index."""
-    return self.index(self._links[child_index][1])
+    joint = self._links[child_index][1]
+    return None if joint is None else self.index(joint)
 
   @utils.memoized_property
   def parent_indices(self):

@@ -487,6 +487,10 @@ def get_dataset_feature_statistics(builder, split):
 
       feature_np = example[feature_name]
 
+      # empty sequences can't update min/max values
+      if getattr(feature_np, 'size', -1) == 0:
+        continue
+
       # For compatibility in graph and eager mode, we can get PODs here and
       # everything may not be neatly wrapped up in numpy's ndarray.
 

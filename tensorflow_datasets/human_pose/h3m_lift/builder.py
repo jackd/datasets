@@ -218,8 +218,10 @@ def _load_p3(base_dir, subject_id, sequence_id):
   path = os.path.join(
     _p3_subject_dir(base_dir, subject_id), _filename_3d(sequence_id))
   with tf.io.gfile.GFile(path, "rb") as fobj:
-    return np.reshape(
-      lazy_imports.h5py.File(fobj, "r")["3D_positions"][:], (-1, 32, 3))   # pylint: disable=no-member
+    data = lazy_imports.h5py.File(fobj, "r")["3D_positions"][:]   # pylint: disable=no-member
+    data = np.reshape(data, (32, 3, -1))
+    data = np.transpose(data, (2, 0, 1))
+    return data
 
 
 def _is_missing(subject_id, sequence_id, camera_id):

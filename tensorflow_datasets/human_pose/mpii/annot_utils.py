@@ -1,11 +1,27 @@
-"""Utilities for converting mpii annotations file, based on
-https://github.com/princeton-vl/pose-hg-train/blob/master/src/misc/mpii.py
-"""
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import six
 import numpy as np
 import tensorflow as tf
 from tensorflow_datasets.core import lazy_imports
+from collections import Sequence
 
+
+class MappedSequence(Sequence):
+  def __init__(self, base, map_fn):
+    self._base = base
+    self._map_fn = map_fn
+
+  def __len__(self):
+    return len(self._base)
+
+  def __getitem__(self, index):
+    return self._map_fn(self._base[index])
+
+
+lazy_map = MappedSequence
 
 # Part info
 _parts = ['rank', 'rkne', 'rhip',
@@ -15,115 +31,216 @@ _parts = ['rank', 'rkne', 'rhip',
          'lsho', 'lelb', 'lwri']
 _part_indices = {k: i for i, k in enumerate(_parts)}
 
+NUM_JOINTS = len(_parts)
+assert(NUM_JOINTS == 16)
+
+
+def _xy(part_info):
+  return part_info['x'][0][0], part_info['y'][0][0]
+
+
+class CoordHelper(object):
+  def __init__(self, annorect):
+    self._annorect = annorect
+    self.num_people = len(annorect[0]) if len(annorect) > 0 else 0
+
+    fields = annorect.dtype.fields
+    self.is_pointless = not (
+        annorect.size > 0 and fields is not None and 'scale' in fields)
+
+    if self.is_pointless:
+      self.valid = np.zeros((self.num_people,), dtype=np.bool)
+      self.num_valid_people = 0
+      self.reorder_indices = np.arange(self.num_people, dtype=np.int64)
+    else:
+      anno_scale = self._annorect['scale'][0]
+      self.valid = np.array([s.size == 1 for s in anno_scale], dtype=np.bool)
+      self.num_valid_people = np.sum(self.valid.astype(np.int64))
+      x = np.arange(self.num_people, dtype=np.int64)
+      self.reorder_indices = np.concatenate(
+          [x[self.valid], x[np.logical_not(self.valid)]], axis=0)
+
+  def reindex(self, original_indices):
+    assert(len(original_indices.shape) == 1)
+    x = np.zeros((self.num_people,), dtype=np.bool)
+    x[original_indices] = True
+    x = x[self.reorder_indices]
+    out = np.where(x)[0]
+    return out
+
+  @property
+  def scales(self):
+    scales = np.zeros((self.num_valid_people,), dtype=np.float32)
+    if self.is_pointless:
+      return scales
+    anno_scale = self._annorect['scale'][0]
+    for i, s in enumerate(anno_scale[self.valid]):
+      scales[i] = s[0][0]
+    return scales
+
+  @property
+  def centers(self):
+    centers = np.zeros((self.num_valid_people, 2), dtype=np.int64)
+    if self.is_pointless:
+      return centers
+
+    objpos = self._annorect['objpos'][0]
+    for i, pos in enumerate(objpos[self.valid]):
+      if pos.size > 0:
+        centers[i] = _xy(pos)
+    return centers
+
+  @property
+  def coordinates(self):
+    num_valid_people = self.num_valid_people
+
+    xy = np.zeros((num_valid_people, NUM_JOINTS, 2), dtype=np.int64)
+    visible = np.zeros((num_valid_people, NUM_JOINTS), dtype=np.bool)
+    if self.is_pointless:
+      return xy, visible
+
+    annopoints = self._annorect['annopoints'][0]
+
+    def update_vis(parts_info, vis):
+      if 'is_visible' in parts_info.dtype.fields:
+        for part_info in parts_info:
+          v = part_info['is_visible']
+          v = v[0][0] if len(v) > 0 else 1
+          if isinstance(v, six.string_types):
+            v = int(v)
+          j = np.squeeze(part_info['id'])
+          vis[j] = bool(v)
+      else:
+        vis[:] = True
+
+    def update_xy(parts_info, xy):
+      for part_info in parts_info:
+        j = np.squeeze(part_info['id'])
+        xy[j] = _xy(part_info)
+
+    for i, points in enumerate(annopoints[self.valid]):
+      parts_info = points[0][0][0][0]
+      update_xy(parts_info, xy[i])
+      update_vis(parts_info, visible[i])
+    return xy, visible
+
+  @property
+  def head_boxes(self):
+    if self.is_pointless:
+      return np.zeros((self.num_people, 4), dtype=np.int64)
+
+    coords = tuple(self._annorect[k][0] for k in ('y1', 'x1', 'y2', 'x2'))
+
+    all_coords = np.array([
+      [c[p][0][0] for c in coords] for p in range(self.num_people)],
+      dtype=np.int64)
+    valid_coords = all_coords[self.valid]
+    invalid_coords = all_coords[np.logical_not(self.valid)]
+    return np.concatenate([valid_coords, invalid_coords], axis=0)
+
 
 class Annotations(object):
   def __init__(self, path):
     with tf.io.gfile.GFile(path, "rb") as fp:
-      self._annot = lazy_imports.scipy_io.loadmat(fp)['RELEASE']    # pylint: disable=no-member
+      self._annot = lazy_imports.scipy_io.loadmat(fp)['RELEASE']  # pylint: disable=no-member
+
+    self._annolist = self._annot['annolist'][0][0][0]
+    self._annorect = self._annolist['annorect']
+
+    self._is_train = np.array(self._annot['img_train'][0][0][0]).astype(np.bool)
+    self._num_examples = len(self._is_train)
 
   @property
-  def num_images(self):
-    return self._annot['img_train'][0][0][0].shape[0]
+  def num_examples(self):
+    return self._num_examples
 
-  def image_subpath(self, idx):
-    filename = str(self._annot['annolist'][0][0][0]['image'][idx][0]['name'][0][0])
-    return filename
+  @property
+  def original_separated_indices(self):
+    def f(ind):
+      ind = ind[0]
+      if ind.size == 0:
+        return np.zeros((0,), dtype=np.int64)
+      else:
+        return np.squeeze(np.array(ind, dtype=np.int64), axis=1) - 1
 
-  def num_people(self, idx):
-    # Get number of people present in image
-    example = self._annot['annolist'][0][0][0]['annorect'][idx]
-    if len(example) > 0:
-        return len(example[0])
-    else:
-        return 0
+    return lazy_map(
+      self._annot['single_person'][0][0], f)
 
-  def is_train(self, idx):
-    # Return true if image is in training set
-    return (
-      self._annot['img_train'][0][0][0][idx] and
-      self._annot['annolist'][0][0][0]['annorect'][idx].size > 0 and
-      'annopoints' in self._annot['annolist'][0][0][0]['annorect'][idx].dtype.fields)
+  @property
+  def video_indices(self):
+    def f(vid):
+      vid = np.squeeze(vid)
+      return None if vid.size == 0 else vid - 1
 
-# def locations(self, idx, num_people=None):
-#   if num_people is None:
-#     num_people = self.num_people(idx)
-#   centers = np.zeros((num_people, 2), dtype=np.int64)
-#   scales = np.zeros((num_people,), dtype=np.float32)
-#   example = self._annot['annolist'][0][0][0]['annorect'][idx]
-#   example_scale = example['scale'][0]
-#   example_objpos = example['objpos'][0]
-#   for person in range(num_people):
-#     person_scale =
-#     if ((not example.dtype.fields is None) and
-#       'scale' in example.dtype.fields and
-#       example_scale[person].size > 0 and
-#       example_objpos[person].size > 0):
-#       scale = example_scale[person][0][0]
-#       xy = example_objpos[person][0][0]
-#       x = xy['x'][0][0]
-#       y = xy['y'][0][0]
-#       center = (x, y)
-#     else:
-#       center = [-1, -1]
-#       scale = -1
-#     centers[person] = center
-#     scales[person] = scale
-#   return centers, scales
+    return lazy_map(self._annolist['vididx'], f)
 
-def location(self, idx, person):
-  # Return center of person, and scale factor
-  example = self._annot['annolist'][0][0][0]['annorect'][idx]
-  if ((not example.dtype.fields is None) and
-    'scale' in example.dtype.fields and
-    example['scale'][0][person].size > 0 and
-    example['objpos'][0][person].size > 0):
-    scale = example['scale'][0][person][0][0]
-    xy = example['objpos'][0][person][0][0]
-    x = xy['x'][0][0]
-    y = xy['y'][0][0]
-    return np.array([x, y]), scale
+  @property
+  def frame_secs(self):
+    def f(sec):
+      sec = np.squeeze(sec)
+      return None if sec.size == 0 else sec.astype(np.int64)
+    return lazy_map(self._annolist['frame_sec'], f)
+
+  @property
+  def activities(self):
+    def fn(act):
+      a = act[0]
+      names = a['cat_name'], a['act_name']
+
+      cat_name, act_name = (
+        None if n is None or len(n) == 0 else n[0] for n in names)
+      # return act_name, cat_name
+      return cat_name, act_name
+    return lazy_map(self._annot['act'][0][0], fn)
+
+  @property
+  def filenames(self):
+    return lazy_map(self._annolist['image'], lambda v: v[0]['name'][0][0])
+
+  @property
+  def is_train(self):
+    return self._is_train
+
+  @property
+  def youtube_ids(self):
+    vl = self._annot['video_list'][0][0][0]
+    return lazy_map(vl, lambda x: x[0])
+
+  @property
+  def coord_helpers(self):
+    return lazy_map(self._annorect, CoordHelper)
+
+
+def normalizations(head_box):
+  # Get head height for distance normalization
+  s = head_box.shape
+  assert(s[-1]) == 4
+  head_box = np.reshape(head_box, s[:-1] + (2, 2))
+  return np.linalg.norm(head_box[..., 0, :] - head_box[..., 1, :]) * 0.6
+
+
+def torso_angle(joints):
+  pt1 = joints[..., _part_indices['pelv'], :]
+  pt2 = joints[..., _part_indices['thrx'], :]
+  if (pt1[0] == 0 or pt2[0] == 0):
+    return np.zeros(shape=joints.shape[:-2], dtype=np.float32)
   else:
-    return [-1, -1], -1
+    diff = pt2 - pt1
+    return 90 + np.arctan2(diff[..., 1], diff[..., 0]) * 180. / np.pi
 
-def part_info(self, idx, person, part):
-  # Part location and visibility
-  # This function can take either the part name or the index of the part
-  if isinstance(part, six.string_types):
-    part = _part_indices[part]
 
-  example = self._annot['annolist'][0][0][0]['annorect'][idx]
-  if example['annopoints'][0][person].size > 0:
-    parts_info = example['annopoints'][0][person][0][0][0][0]
-    for i in range(len(parts_info)):
-      if parts_info[i]['id'][0][0] == part:
-        if 'is_visible' in parts_info.dtype.fields:
-          v = parts_info[i]['is_visible']
-          v = v[0][0] if len(v) > 0 else 1
-          if isinstance(v, six.string_types):
-            v = int(v)
-        else:
-          v = 1
-        return np.array(
-          [parts_info[i]['x'][0][0], parts_info[i]['y'][0][0]], int), v
-    return np.zeros(2, int), 0
-  return -np.ones(2, int), -1
+def get_names_lists(annot):
+  cat_names, act_names = zip(*annot.activities)
+  act_names = [
+    (c, a) for (c, a) in zip(cat_names, act_names)
+    if c is not None and a is not None]
+  cat_names = set(cat_names)
+  if None in cat_names:
+    cat_names.remove(None)
+  # activity names partitioned based on the sorted category names
 
-def normalization(self, idx, person):
-    # Get head height for distance normalization
-    if self.is_train(idx):
-        example = self._annot['annolist'][0][0][0]['annorect'][idx]
-        x1 = int(example['x1'][0][person][0][0])
-        y1 = int(example['y1'][0][person][0][0])
-        x2, y2 = int(example['x2'][0][person][0][0]), int(example['y2'][0][person][0][0])
-        diff = np.array([y2 - y1, x2 - x1], np.float)
-        return np.linalg.norm(diff) * .6
-    return -1
-
-def torso_angle(self, idx, person):
-    # Get angle from pelvis to thorax, 0 means the torso is up vertically
-    pt1 = self._part_info(idx, person, 'pelv')[0]
-    pt2 = self._part_info(idx, person, 'thrx')[0]
-    if not (pt1[0] == 0 or pt2[0] == 0):
-        return 90 + np.arctan2(pt2[1] - pt1[1], pt2[0] - pt1[0]) * 180. / np.pi
-    else:
-        return 0
+  act_names = sorted(set(act_names), key=lambda a: '%s~%s' % a)
+  act_names = [a[1] for a in act_names]
+  cat_names = sorted(set(cat_names))
+  cat_names = [c for c in cat_names]
+  return cat_names, act_names

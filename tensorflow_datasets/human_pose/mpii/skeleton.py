@@ -17,8 +17,8 @@ s16 = s.Skeleton((
     (s.head_back, None),
     (s.r_wrist, s.r_elbow),
     (s.r_elbow, s.r_shoulder),
-    (s.r_shoulder, s.neck),
-    (s.l_shoulder, s.neck),
+    (s.r_shoulder, s.thorax),
+    (s.l_shoulder, s.thorax),
     (s.l_elbow, s.l_shoulder),
     (s.l_wrist, s.l_elbow),
 ), name="mpii_s16")

@@ -208,7 +208,7 @@ class DownloadManager(object):
     if not resource.path:
       resource.path = os.path.join(self._download_dir, resource.fname)
     if (not self._force_download and
-        # resource.sha256 and
+        resource.sha256 and
         resource.exists_locally()):
       logging.info('URL %s already downloaded: reusing %s.', resource.url,
                    resource.path)
